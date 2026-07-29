@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from rapidfuzz import fuzz
 
 # LangGraph imports
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 
 # Gemini SDK imports
 from google import genai
@@ -1251,7 +1251,7 @@ def build_workflow() -> StateGraph:
     workflow.add_node("node_decision_gate", decision_gate_node)
 
     # Set entry point
-    workflow.set_entry_point("node_intake")
+    workflow.add_edge(START, "node_intake")
 
     # Wire linear execution pipeline
     workflow.add_edge("node_intake", "node_price_anomaly")
@@ -1270,12 +1270,7 @@ app_workflow = build_workflow().compile()
 
 def run_triage_flow(raw_payload: Dict[str, Any], db: Optional[Session] = None) -> TriageResultSchema:
     """Executes the triage workflow for a raw requisition payload and returns the final TriageResult."""
-    # Inject database session into node calls via configuration if desired,
-    # but here we rely on the nodes opening/closing local db sessions,
-    # or passing a database session if run_triage_flow is called within an active transaction.
-    
-    # We run the compiled LangGraph workflow synchronously
-    initial_state = {
+    state = {
         "raw_payload": raw_payload,
         "requisition": None,
         "price_anomaly": None,
@@ -1288,6 +1283,14 @@ def run_triage_flow(raw_payload: Dict[str, Any], db: Optional[Session] = None) -
         "intra_pr_material_overlap": None
     }
     
-    # Run the graph
-    final_state = app_workflow.invoke(initial_state)
-    return final_state["triage_result"]
+    # Execute pipeline nodes sequentially with database session support
+    state.update(intake_node(state))
+    state.update(price_anomaly_node(state, db=db))
+    state.update(vendor_risk_node(state, db=db))
+    state.update(duplicate_detection_node(state, db=db))
+    state.update(policy_compliance_node(state, db=db))
+    state.update(intra_pr_material_overlap_node(state))
+    state.update(synthesis_node(state))
+    state.update(decision_gate_node(state))
+
+    return state["triage_result"]

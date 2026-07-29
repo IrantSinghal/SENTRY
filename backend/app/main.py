@@ -1100,5 +1100,8 @@ def get_vendors_screening_summary(db: Session = Depends(get_db), current_user: d
         "flagged_adverse_media": row[2] or 0,
         "flagged_registry_invalid": row[3] or 0
     }
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
